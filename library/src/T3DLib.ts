@@ -10,6 +10,7 @@ import SingleModelRenderer from "./dataRenderer/SingleModelRenderer";
 import TerrainRenderer from "./dataRenderer/TerrainRenderer";
 import ZoneRenderer from "./dataRenderer/ZoneRenderer";
 import StringRenderer from "./dataRenderer/StringRenderer";
+import CustomMarkersRenderer from "./dataRenderer/CustomMarkersRenderer";
 import Logger from "./Logger";
 
 import MapFileList from "./MapFileList";
@@ -44,6 +45,7 @@ T3D = {
   TerrainRenderer: TerrainRenderer,
   ZoneRenderer: ZoneRenderer,
   StringRenderer: StringRenderer,
+  CustomMarkersRenderer: CustomMarkersRenderer,
   Logger: Logger,
   MapFileList: MapFileList,
   MaterialUtils: MaterialUtils,

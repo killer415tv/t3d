@@ -4,6 +4,12 @@ import { MapControls } from "three/examples/jsm/controls/MapControls.js";
 const CANVAS_CLEAR_COLOR = 0x342920;
 const FOG_LENGTH = 5000;
 
+// MQTT Configuration
+const MQTT_BROKER = "www.beetlerank.com";
+const MQTT_PORT = 9001;
+const MQTT_USE_SSL = true;
+const PLAYER_TOPIC_PREFIX = "gw2/players";
+
 export default class AppRenderer {
   constructor(stats) {
     this.localReader = undefined;
@@ -12,6 +18,10 @@ export default class AppRenderer {
     this._mapContext = undefined;
     this._renderOptions = undefined;
     this.stats = stats;
+
+    // Player markers for MQTT
+    this._playerMarkers = {};
+    this._mqttClient = undefined;
 
     // Defaults
     this.fog = 25000;
@@ -160,6 +170,7 @@ export default class AppRenderer {
     this._mapContext = undefined;
     this._renderOptions = undefined;
     this.loadedMapID = undefined;
+    this._clearAllPlayerMarkers();
     for (const mesh of this._mapMeshes) {
       this._threeContext.scene.remove(mesh);
     }
@@ -199,6 +210,7 @@ export default class AppRenderer {
 
     this.setupWebGLRenderer(true);
     this.setupController();
+    this._setupMqttConnection();
     this._render();
   }
 
@@ -327,6 +339,321 @@ export default class AppRenderer {
       this._threeContext.camera.position.x = 0;
       this._threeContext.camera.position.y = bounds ? bounds.y2 : 0;
       this._threeContext.camera.position.z = 0;
+    }
+  }
+
+  /** MQTT Methods */
+  _createMqttStatusBadge() {
+    const badge = document.createElement("div");
+    badge.id = "mqtt-status-badge";
+    badge.style.cssText = `
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 10000;
+        padding: 8px 12px;
+        background: #333;
+        color: white;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    `;
+
+    const indicator = document.createElement("span");
+    indicator.id = "mqtt-indicator";
+    indicator.style.cssText = `
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #666;
+    `;
+
+    const text = document.createElement("span");
+    text.id = "mqtt-text";
+    text.textContent = "MQTT: Connecting...";
+
+    badge.appendChild(indicator);
+    badge.appendChild(text);
+    document.body.appendChild(badge);
+
+    this._mqttBadge = { badge, indicator, text };
+  }
+
+  _updateMqttStatus(status) {
+    if (!this._mqttBadge) return;
+
+    const { indicator, text } = this._mqttBadge;
+
+    switch (status) {
+      case "connected":
+        indicator.style.background = "#00ff00";
+        text.textContent = "MQTT: Connected";
+        break;
+      case "error":
+        indicator.style.background = "#ff0000";
+        text.textContent = "MQTT: Error";
+        break;
+      case "disconnected":
+        indicator.style.background = "#ffaa00";
+        text.textContent = "MQTT: Disconnected";
+        break;
+      default:
+        indicator.style.background = "#666";
+        text.textContent = "MQTT: " + status;
+    }
+  }
+
+  _setupMqttConnection() {
+    if (typeof Paho === "undefined" && typeof mqtt === "undefined") {
+      console.warn("No MQTT library loaded, skipping MQTT connection");
+      return;
+    }
+
+    if (typeof Paho !== "undefined") {
+      this._setupPahoMqtt();
+    } else {
+      this._setupMqttJs();
+    }
+  }
+
+  _setupPahoMqtt() {
+    console.log(`Attempting Paho MQTT connection to ${MQTT_BROKER}:${MQTT_PORT} with SSL: ${MQTT_USE_SSL}...`);
+
+    this._createMqttStatusBadge();
+    this._updateMqttStatus("connecting");
+
+    try {
+      const clientId = "t3d-explorer-" + Math.floor(Math.random() * 10000);
+
+      this._mqttClient = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, "/", clientId);
+
+      const options = {
+        timeout: 2000,
+        useSSL: MQTT_USE_SSL,
+        cleanSession: false,
+        onSuccess: () => {
+          console.log("Connected to MQTT broker");
+          this._updateMqttStatus("connected");
+          this._mqttClient.subscribe(PLAYER_TOPIC_PREFIX + "/#");
+        },
+        onFailure: (err) => {
+          console.error("MQTT connection failed:", err);
+          this._updateMqttStatus("error");
+        },
+      };
+
+      this._mqttClient.onMessageArrived = (message) => {
+        console.log("📨 MQTT message received!");
+        console.log("  Topic:", message.destinationName);
+        console.log("  Payload:", message.payloadString);
+        this._handlePlayerMessage(message.destinationName, message.payloadString);
+      };
+
+      this._mqttClient.onConnectionLost = (err) => {
+        console.log("MQTT connection lost:", err.errorMessage);
+        this._updateMqttStatus("disconnected");
+      };
+
+      this._mqttClient.connect(options);
+    } catch (err) {
+      console.error("Failed to create Paho MQTT client:", err);
+      this._updateMqttStatus("error");
+    }
+  }
+
+  _setupMqttJs() {
+    const protocol = MQTT_USE_SSL ? "wss://" : "ws://";
+    console.log(`Attempting MQTT connection to ${protocol}${MQTT_BROKER}:${MQTT_PORT}...`);
+
+    setTimeout(() => {
+      this._connectToMqtt(protocol);
+    }, 1000);
+  }
+
+  _connectToMqtt(protocol) {
+    try {
+      this._mqttClient = mqtt.connect(`${protocol}${MQTT_BROKER}:${MQTT_PORT}`, {
+        clientId: `t3d-explorer-${Math.random().toString(16).slice(2, 10)}`,
+        keepalive: 60,
+        clean: true,
+        connectTimeout: 10000,
+        reconnectPeriod: 5000,
+        rejectUnauthorized: false,
+      });
+
+      this._createMqttStatusBadge();
+
+      this._mqttClient.on("connect", () => {
+        console.log(`Connected to MQTT broker on port ${MQTT_PORT}`);
+        this._updateMqttStatus("connected");
+        this._mqttClient.subscribe(`${PLAYER_TOPIC_PREFIX}/#`, (err) => {
+          if (err) {
+            console.error("MQTT subscription error:", err);
+          } else {
+            console.log("Subscribed to player positions");
+          }
+        });
+      });
+
+      this._mqttClient.on("message", (topic, message) => {
+        this._handlePlayerMessage(topic, message);
+      });
+
+      this._mqttClient.on("error", (err) => {
+        console.error("MQTT error:", err.message);
+        this._updateMqttStatus("error");
+      });
+
+      this._mqttClient.on("close", () => {
+        console.log("MQTT connection closed");
+        this._updateMqttStatus("disconnected");
+      });
+
+      this._mqttClient.on("offline", () => {
+        console.log("MQTT client offline");
+      });
+    } catch (err) {
+      console.error("Failed to setup MQTT:", err);
+    }
+  }
+
+  _handlePlayerMessage(topic, message) {
+    console.log("📩 Processing message from topic:", topic);
+
+    if (this._threeContext.camera) {
+      const camPos = this._threeContext.camera.position;
+      console.log("📷 Camera position:", camPos.x, camPos.y, camPos.z);
+    }
+
+    try {
+      const playerData = JSON.parse(message.toString());
+      const { x, y, z, name, color, mapId } = playerData;
+
+      if (name === undefined || x === undefined || y === undefined || z === undefined) {
+        console.warn("⚠️ Invalid player data - missing fields");
+        return;
+      }
+
+      console.log("✅ Creating marker for player:", name, "at position:", x, y, z, "mapId:", mapId);
+
+      const METERS_TO_INCHES = 39.3701;
+      const t3dPosition = new THREE.Vector3(
+        x * METERS_TO_INCHES,
+        y * METERS_TO_INCHES,
+        -z * METERS_TO_INCHES
+      );
+
+      console.log("🔄 Final T3D position (meters to inches):", t3dPosition.x, t3dPosition.y, t3dPosition.z);
+
+      this._updatePlayerMarker(name, t3dPosition, color || 0x00ff00);
+    } catch (err) {
+      console.error("Error parsing player message:", err);
+    }
+  }
+
+  _updatePlayerMarker(playerName, position, colorValue) {
+    console.log("🎯 Creating marker for", playerName);
+    console.log("  Scene exists:", !!this._threeContext.scene);
+    console.log("  Position:", position);
+
+    if (!this._threeContext.scene) {
+      console.warn("⚠️ Scene not ready, cannot add marker");
+      return;
+    }
+
+    if (this._playerMarkers[playerName]) {
+      this._removePlayerMarker(playerName);
+    }
+
+    const markerGroup = new THREE.Group();
+    markerGroup.position.copy(position);
+
+    const color = new THREE.Color(colorValue);
+
+    const lineHeight = 15000;
+    const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, lineHeight, 0),
+    ]);
+    const lineMaterial = new THREE.LineBasicMaterial({ color: color });
+    const line = new THREE.Line(lineGeometry, lineMaterial);
+    markerGroup.add(line);
+
+    const sphereGeometry = new THREE.SphereGeometry(50, 16, 16);
+    const sphereMaterial = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.8 });
+    const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+    sphere.position.y = 25;
+    markerGroup.add(sphere);
+
+    const nameSprite = this._createTextSprite(playerName, color.getHexString());
+    nameSprite.position.y = 100;
+    markerGroup.add(nameSprite);
+
+    this._threeContext.scene.add(markerGroup);
+
+    this._playerMarkers[playerName] = {
+      group: markerGroup,
+      line: line,
+      sprite: nameSprite,
+    };
+  }
+
+  _createTextSprite(text, colorHex) {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+
+    const fontSize = 24;
+    context.font = "bold " + fontSize + "px Arial, sans-serif";
+    const textWidth = context.measureText(text).width;
+    canvas.width = textWidth + 20;
+    canvas.height = fontSize + 20;
+
+    context.font = "bold " + fontSize + "px Arial, sans-serif";
+    context.fillStyle = "#" + colorHex;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(text, canvas.width / 2, canvas.height / 2);
+
+    context.strokeStyle = "#000000";
+    context.lineWidth = 3;
+    context.strokeText(text, canvas.width / 2, canvas.height / 2);
+    context.fillText(text, canvas.width / 2, canvas.height / 2);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(spriteMaterial);
+
+    const scaleFactor = 50;
+    sprite.scale.set(canvas.width / canvas.height * scaleFactor, scaleFactor, 1);
+
+    return sprite;
+  }
+
+  _removePlayerMarker(playerName) {
+    const marker = this._playerMarkers[playerName];
+    if (marker) {
+      this._threeContext.scene.remove(marker.group);
+
+      if (marker.line) {
+        marker.line.geometry.dispose();
+        marker.line.material.dispose();
+      }
+      if (marker.sprite) {
+        marker.sprite.material.map.dispose();
+        marker.sprite.material.dispose();
+      }
+
+      delete this._playerMarkers[playerName];
+    }
+  }
+
+  _clearAllPlayerMarkers() {
+    for (const playerName of Object.keys(this._playerMarkers)) {
+      this._removePlayerMarker(playerName);
     }
   }
 }

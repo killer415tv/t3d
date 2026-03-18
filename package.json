@@ -17,6 +17,7 @@
     "prettier": "3.3.3"
   },
   "scripts": {
+    "build": "npm run build -w library && npm run build -w explorer",
     "lint:check": "npm run lint:check -ws",
     "format:check": "npm run format:check -ws"
   },
