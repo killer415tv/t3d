@@ -7,6 +7,7 @@ export default class UI {
     this.mapFileList = [];
     this.autoLoad = undefined;
     this.shouldUpdateUrl = false;
+    this.csvContent = undefined;  // Store CSV content for markers
 
     this.urlUpdateInterval = setInterval(() => this.updateUrl(), 100);
     this.lastUrlData = "";
@@ -55,6 +56,7 @@ export default class UI {
     $("#categorySelect").on("change", () => this.genMapSelect());
     $("#mapLoadButton").on("click", () => this.onMapLoadClick());
     $("#scanMapLink").on("click", () => this.onScanMapClick());
+    $("#csvFileInput").on("change", (event) => this.onCSVFileSelected(event));
   }
   setupMapExplorer() {
     $("#switchControllerType").on("click", () => {
@@ -93,10 +95,12 @@ export default class UI {
 
   onAutoLoad() {
     const mapId = this.autoLoad.map;
+    this.currentMapId = mapId;  // Store for CSV scale slider
     const renderOptions = {
       zone: this.autoLoad.loadZone === undefined ? false : this.autoLoad.loadZone,
       props: this.autoLoad.loadProp === undefined ? true : this.autoLoad.loadProp,
       collisions: this.autoLoad.showHavok === undefined ? false : this.autoLoad.showHavok,
+      csvContent: this.csvContent,
     };
     this.showingProgress = true;
     $("#loading-ui").fadeIn();
@@ -110,6 +114,21 @@ export default class UI {
     });
   }
 
+  onCSVFileSelected(event) {
+    const file = event.target.files[0];
+    if (!file) {
+      this.csvContent = undefined;
+      return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      this.csvContent = e.target.result;
+      console.log("CSV file loaded, lines:", this.csvContent.split('\n').length);
+    };
+    reader.readAsText(file);
+  }
+
   onMapLoadClick() {
     // Anti aliasing option can only be enabled when creating the webgl context
     // So we update that first if needed
@@ -120,10 +139,14 @@ export default class UI {
     }
 
     const mapId = $("#mapSelect").val();
+    this.currentMapId = mapId;  // Store for CSV scale slider
     const renderOptions = {
       zone: $("#loadZone").is(":checked"),
       props: $("#loadProps").is(":checked"),
       collisions: $("#loadColl").is(":checked"),
+      csvContent: this.csvContent,
+      markerRadius: parseInt($("#markerRadius").val(), 10) || 15,
+      labelOffset: 30,
     };
     $("#choose-map").slideUp(() => {
       this.showingProgress = true;

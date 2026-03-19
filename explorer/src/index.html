@@ -48,6 +48,33 @@ along with the T3D Project. If not, see <http://www.gnu.org/licenses/>.
             the graphics are still missing such as animations, lighting, and various visual effects which give Guild
             Wars 2 its immersive experience.
           </p>
+          <!-- New in 2026 -->
+          <div class="newFeatureBadge">✨ New in 2026</div>
+          <h3>Beetlerank Checkpoint Viewer</h3>
+          <p>
+            This version introduces support for visualizing checkpoint files from
+            <a href="https://beetlerank.com" target="_blank"><strong>beetlerank.com</strong></a>. You can now load and view
+            checkpoint data directly in the map explorer.
+          </p>
+          <h3>Real-Time Telemetry</h3>
+          <p>
+            T3D Explorer is now connected to <strong>MQTT</strong> to display the real-time position of users who are running
+            telemetry programs. This allows you to see where other players are in the game world as they play.
+          </p>
+          <h3>Telemetry Programs</h3>
+          <p>To use the real-time telemetry feature, you need to install one of these telemetry programs:</p>
+          <ul class="telemetryLinks">
+            <li>
+              <a href="https://github.com/Girbilcannon/GW2Telemetry/releases/tag/Gw2Telemetry_v1_0_0" target="_blank">
+                <strong>GW2Telemetry</strong> by Girbilcannon
+              </a>
+            </li>
+            <li>
+              <a href="https://github.com/killer415tv/gw2_telemetry" target="_blank">
+                <strong>gw2_telemetry</strong> by killer415
+              </a>
+            </li>
+          </ul>
           <h3>Contacts</h3>
           <p>
             T3D Explorer is part of the <a href="https://github.com/njibhu/t3d/">T3D project</a>. If you have questions
@@ -109,6 +136,21 @@ along with the T3D Project. If not, see <http://www.gnu.org/licenses/>.
             <label>
               <span>Visible collisions:</span>
               <input type="checkbox" id="loadColl" />
+            </label>
+          </div>
+        </section>
+        <section>
+          <h3>CSV Markers (optional):</h3>
+          <div>
+            <label>
+              <span>Load CSV file:</span>
+              <input type="file" id="csvFileInput" accept=".csv" />
+            </label>
+          </div>
+          <div>
+            <label>
+              <span>Marker radius:</span>
+              <input type="number" id="markerRadius" value="15" min="1" max="100" />
             </label>
           </div>
         </section>

@@ -75,6 +75,18 @@ export default class AppRenderer {
       renderers.push({ renderClass: T3D.HavokRenderer, settings: { visible: true } });
     }
 
+    // Add custom markers renderer if CSV content is provided
+    if (renderOptions.csvContent) {
+      renderers.push({
+        renderClass: T3D.CustomMarkersRenderer,
+        settings: {
+          csvContent: renderOptions.csvContent,
+          sphereRadius: renderOptions.markerRadius || 15,
+          labelOffset: renderOptions.labelOffset || 30,
+        }
+      });
+    }
+
     T3D.renderMapContentsAsync(this.localReader, this.loadedMapID, renderers, (context) => {
       this._loadMapCallback(context, renderOptions, callback);
     });
@@ -314,6 +326,25 @@ export default class AppRenderer {
       for (const collModel of T3D.getContextValue(context, T3D.HavokRenderer, "meshes")) {
         this._threeContext.scene.add(collModel);
         this._mapMeshes.push(collModel);
+      }
+    }
+
+    // Add custom markers from CSV
+    if (renderOptions.csvContent) {
+      const markerMeshes = T3D.getContextValue(context, T3D.CustomMarkersRenderer, "meshes");
+      const markerLabels = T3D.getContextValue(context, T3D.CustomMarkersRenderer, "labels");
+      
+      if (markerMeshes) {
+        for (const marker of markerMeshes) {
+          this._threeContext.scene.add(marker);
+          this._mapMeshes.push(marker);
+        }
+      }
+      if (markerLabels) {
+        for (const label of markerLabels) {
+          this._threeContext.scene.add(label);
+          this._mapMeshes.push(label);
+        }
       }
     }
 
