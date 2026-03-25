@@ -58,7 +58,7 @@ along with the T3D Project. If not, see <http://www.gnu.org/licenses/>.
           </p>
           <h3>Real-Time Telemetry</h3>
           <p>
-            T3D Explorer is now connected to <strong>MQTT</strong> to display the real-time position of users who are running
+            T3D Explorer is now connected to <strong>WebSocket</strong> to display the real-time position of users who are running
             telemetry programs. This allows you to see where other players are in the game world as they play.
           </p>
           <h3>Telemetry Programs</h3>
@@ -155,6 +155,19 @@ along with the T3D Project. If not, see <http://www.gnu.org/licenses/>.
           </div>
         </section>
         <section>
+          <h3>Real-Time Telemetry (WebSocket):</h3>
+          <div id="websocketSection">
+            <label>
+              <span>Event Code (optional):</span>
+              <input type="text" id="eventCodeInput" placeholder="Enter event code to track specific race" />
+            </label>
+            <div id="websocketButtons">
+              <button id="wsConnectButton" class="control">Connect</button>
+              <button id="wsDisconnectButton" class="control" disabled>Disconnect</button>
+            </div>
+          </div>
+        </section>
+        <section>
           <p>Enabling <span>Zone models</span> allows you to view trees, plants and various 'nature' models.</p>
           <p>Enabling <span>Props models</span> allows you to view most of the 3d models in a map.</p>
           <p>
@@ -226,7 +239,7 @@ along with the T3D Project. If not, see <http://www.gnu.org/licenses/>.
     <!--
         Third parties
       -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.2/mqttws31.min.js"></script>
+    <!-- WebSocket uses native browser API, no external library needed -->
     <script src="static/jquery.js"></script>
     <script src="static/three.js"></script>
     <script src="static/t3d-parser.js"></script>

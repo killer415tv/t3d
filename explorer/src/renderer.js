@@ -4,11 +4,10 @@ import { MapControls } from "three/examples/jsm/controls/MapControls.js";
 const CANVAS_CLEAR_COLOR = 0x342920;
 const FOG_LENGTH = 5000;
 
-// MQTT Configuration
-const MQTT_BROKER = "www.beetlerank.com";
-const MQTT_PORT = 9001;
-const MQTT_USE_SSL = true;
-const PLAYER_TOPIC_PREFIX = "gw2/players";
+// WebSocket Configuration (replaces MQTT)
+const WEBSOCKET_HOST = "www.beetlerank.com";
+const WEBSOCKET_PORT = 3002;
+const WEBSOCKET_URL = `wss://${WEBSOCKET_HOST}:${WEBSOCKET_PORT}`;
 
 export default class AppRenderer {
   constructor(stats) {
@@ -19,9 +18,11 @@ export default class AppRenderer {
     this._renderOptions = undefined;
     this.stats = stats;
 
-    // Player markers for MQTT
+    // Player markers for WebSocket
     this._playerMarkers = {};
-    this._mqttClient = undefined;
+    this._wsClient = undefined;
+    this._wsConnected = false;
+    this._wsRoom = "";
 
     // Defaults
     this.fog = 25000;
@@ -222,7 +223,7 @@ export default class AppRenderer {
 
     this.setupWebGLRenderer(true);
     this.setupController();
-    this._setupMqttConnection();
+    // WebSocket connection will be set up via UI buttons, not automatic
     this._render();
   }
 
@@ -373,10 +374,10 @@ export default class AppRenderer {
     }
   }
 
-  /** MQTT Methods */
-  _createMqttStatusBadge() {
+  /** WebSocket Methods (replaces MQTT) */
+  _createWsStatusBadge() {
     const badge = document.createElement("div");
-    badge.id = "mqtt-status-badge";
+    badge.id = "ws-status-badge";
     badge.style.cssText = `
         position: fixed;
         top: 10px;
@@ -395,7 +396,7 @@ export default class AppRenderer {
     `;
 
     const indicator = document.createElement("span");
-    indicator.id = "mqtt-indicator";
+    indicator.id = "ws-indicator";
     indicator.style.cssText = `
         width: 10px;
         height: 10px;
@@ -404,186 +405,162 @@ export default class AppRenderer {
     `;
 
     const text = document.createElement("span");
-    text.id = "mqtt-text";
-    text.textContent = "MQTT: Connecting...";
+    text.id = "ws-text";
+    text.textContent = "WebSocket: Disconnected";
 
     badge.appendChild(indicator);
     badge.appendChild(text);
     document.body.appendChild(badge);
 
-    this._mqttBadge = { badge, indicator, text };
+    this._wsBadge = { badge, indicator, text };
   }
 
-  _updateMqttStatus(status) {
-    if (!this._mqttBadge) return;
+  _updateWsStatus(status) {
+    if (!this._wsBadge) return;
 
-    const { indicator, text } = this._mqttBadge;
+    const { indicator, text } = this._wsBadge;
 
     switch (status) {
       case "connected":
         indicator.style.background = "#00ff00";
-        text.textContent = "MQTT: Connected";
+        text.textContent = "WebSocket: Connected";
         break;
       case "error":
         indicator.style.background = "#ff0000";
-        text.textContent = "MQTT: Error";
+        text.textContent = "WebSocket: Error";
         break;
       case "disconnected":
         indicator.style.background = "#ffaa00";
-        text.textContent = "MQTT: Disconnected";
+        text.textContent = "WebSocket: Disconnected";
         break;
       default:
         indicator.style.background = "#666";
-        text.textContent = "MQTT: " + status;
+        text.textContent = "WebSocket: " + status;
     }
   }
 
-  _setupMqttConnection() {
-    if (typeof Paho === "undefined" && typeof mqtt === "undefined") {
-      console.warn("No MQTT library loaded, skipping MQTT connection");
+  /**
+   * Connect to WebSocket server
+   * @param {string} room - Room/event code to subscribe to (optional, empty for global)
+   */
+  connectWebSocket(room = "") {
+    if (this._wsClient) {
+      console.log("WebSocket already connected");
       return;
     }
 
-    if (typeof Paho !== "undefined") {
-      this._setupPahoMqtt();
-    } else {
-      this._setupMqttJs();
-    }
-  }
-
-  _setupPahoMqtt() {
-    console.log(`Attempting Paho MQTT connection to ${MQTT_BROKER}:${MQTT_PORT} with SSL: ${MQTT_USE_SSL}...`);
-
-    this._createMqttStatusBadge();
-    this._updateMqttStatus("connecting");
+    console.log(`Connecting to WebSocket at ${WEBSOCKET_URL}...`);
+    this._createWsStatusBadge();
+    this._updateWsStatus("connecting");
+    this._wsRoom = room;
 
     try {
-      const clientId = "t3d-explorer-" + Math.floor(Math.random() * 10000);
+      this._wsClient = new WebSocket(WEBSOCKET_URL);
 
-      this._mqttClient = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, "/", clientId);
+      this._wsClient.onopen = () => {
+        console.log("WebSocket connected!");
+        this._updateWsStatus("connected");
+        this._wsConnected = true;
 
-      const options = {
-        timeout: 2000,
-        useSSL: MQTT_USE_SSL,
-        cleanSession: false,
-        onSuccess: () => {
-          console.log("Connected to MQTT broker");
-          this._updateMqttStatus("connected");
-          this._mqttClient.subscribe(PLAYER_TOPIC_PREFIX + "/#");
-        },
-        onFailure: (err) => {
-          console.error("MQTT connection failed:", err);
-          this._updateMqttStatus("error");
-        },
+        // Subscribe to room if provided
+        if (room) {
+          const subscribeMsg = {
+            type: "subscribe",
+            room: room
+          };
+          this._wsClient.send(JSON.stringify(subscribeMsg));
+          console.log("Subscribed to room:", room);
+        }
       };
 
-      this._mqttClient.onMessageArrived = (message) => {
-        console.log("📨 MQTT message received!");
-        console.log("  Topic:", message.destinationName);
-        console.log("  Payload:", message.payloadString);
-        this._handlePlayerMessage(message.destinationName, message.payloadString);
+      this._wsClient.onmessage = (event) => {
+        this._handleWsMessage(event.data);
       };
 
-      this._mqttClient.onConnectionLost = (err) => {
-        console.log("MQTT connection lost:", err.errorMessage);
-        this._updateMqttStatus("disconnected");
+      this._wsClient.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        this._updateWsStatus("error");
       };
 
-      this._mqttClient.connect(options);
+      this._wsClient.onclose = (closeEvent) => {
+        console.log("WebSocket closed:", closeEvent.code, closeEvent.reason);
+        this._updateWsStatus("disconnected");
+        this._wsConnected = false;
+        this._wsClient = undefined;
+      };
     } catch (err) {
-      console.error("Failed to create Paho MQTT client:", err);
-      this._updateMqttStatus("error");
+      console.error("Failed to create WebSocket:", err);
+      this._updateWsStatus("error");
     }
   }
 
-  _setupMqttJs() {
-    const protocol = MQTT_USE_SSL ? "wss://" : "ws://";
-    console.log(`Attempting MQTT connection to ${protocol}${MQTT_BROKER}:${MQTT_PORT}...`);
-
-    setTimeout(() => {
-      this._connectToMqtt(protocol);
-    }, 1000);
+  /**
+   * Disconnect from WebSocket server
+   */
+  disconnectWebSocket() {
+    if (this._wsClient) {
+      this._wsClient.close();
+      this._wsClient = undefined;
+      this._wsConnected = false;
+      this._updateWsStatus("disconnected");
+      console.log("WebSocket disconnected");
+    }
   }
 
-  _connectToMqtt(protocol) {
+  /**
+   * Handle WebSocket messages (snapshots with all players)
+   */
+  _handleWsMessage(message) {
     try {
-      this._mqttClient = mqtt.connect(`${protocol}${MQTT_BROKER}:${MQTT_PORT}`, {
-        clientId: `t3d-explorer-${Math.random().toString(16).slice(2, 10)}`,
-        keepalive: 60,
-        clean: true,
-        connectTimeout: 10000,
-        reconnectPeriod: 5000,
-        rejectUnauthorized: false,
-      });
+      const data = JSON.parse(message);
 
-      this._createMqttStatusBadge();
+      // Check if it's a snapshot message with users array
+      if (data.type === "snapshot" && data.users) {
+        console.log("📨 Received snapshot with", data.users.length, "users");
 
-      this._mqttClient.on("connect", () => {
-        console.log(`Connected to MQTT broker on port ${MQTT_PORT}`);
-        this._updateMqttStatus("connected");
-        this._mqttClient.subscribe(`${PLAYER_TOPIC_PREFIX}/#`, (err) => {
-          if (err) {
-            console.error("MQTT subscription error:", err);
-          } else {
-            console.log("Subscribed to player positions");
+        for (const userData of data.users) {
+          // Only process position messages
+          if (userData.option === "position" && userData.user) {
+            this._processPlayerData(userData);
           }
-        });
-      });
-
-      this._mqttClient.on("message", (topic, message) => {
-        this._handlePlayerMessage(topic, message);
-      });
-
-      this._mqttClient.on("error", (err) => {
-        console.error("MQTT error:", err.message);
-        this._updateMqttStatus("error");
-      });
-
-      this._mqttClient.on("close", () => {
-        console.log("MQTT connection closed");
-        this._updateMqttStatus("disconnected");
-      });
-
-      this._mqttClient.on("offline", () => {
-        console.log("MQTT client offline");
-      });
+        }
+      }
     } catch (err) {
-      console.error("Failed to setup MQTT:", err);
+      console.error("Error parsing WebSocket message:", err);
     }
   }
 
-  _handlePlayerMessage(topic, message) {
-    console.log("📩 Processing message from topic:", topic);
+  /**
+   * Process individual player data from WebSocket
+   */
+  _processPlayerData(playerData) {
+    const { user, x, y, z, color } = playerData;
 
-    if (this._threeContext.camera) {
-      const camPos = this._threeContext.camera.position;
-      console.log("📷 Camera position:", camPos.x, camPos.y, camPos.z);
+    if (user === undefined || x === undefined || y === undefined || z === undefined) {
+      console.warn("⚠️ Invalid player data - missing fields");
+      return;
     }
 
-    try {
-      const playerData = JSON.parse(message.toString());
-      const { x, y, z, name, color, mapId } = playerData;
+    console.log("✅ Processing player:", user, "at position:", x, y, z);
 
-      if (name === undefined || x === undefined || y === undefined || z === undefined) {
-        console.warn("⚠️ Invalid player data - missing fields");
-        return;
+    const METERS_TO_INCHES = 39.3701;
+    const t3dPosition = new THREE.Vector3(
+      x * METERS_TO_INCHES,
+      y * METERS_TO_INCHES,
+      -z * METERS_TO_INCHES
+    );
+
+    // Convert hex color string to number (e.g., "#FF5733" -> 0xFF5733)
+    let colorValue = 0x00ff00; // default green
+    if (color) {
+      if (typeof color === "string" && color.startsWith("#")) {
+        colorValue = parseInt(color.slice(1), 16);
+      } else if (typeof color === "number") {
+        colorValue = color;
       }
-
-      console.log("✅ Creating marker for player:", name, "at position:", x, y, z, "mapId:", mapId);
-
-      const METERS_TO_INCHES = 39.3701;
-      const t3dPosition = new THREE.Vector3(
-        x * METERS_TO_INCHES,
-        y * METERS_TO_INCHES,
-        -z * METERS_TO_INCHES
-      );
-
-      console.log("🔄 Final T3D position (meters to inches):", t3dPosition.x, t3dPosition.y, t3dPosition.z);
-
-      this._updatePlayerMarker(name, t3dPosition, color || 0x00ff00);
-    } catch (err) {
-      console.error("Error parsing player message:", err);
     }
+
+    this._updatePlayerMarker(user, t3dPosition, colorValue);
   }
 
   _updatePlayerMarker(playerName, position, colorValue) {

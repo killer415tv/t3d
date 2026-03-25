@@ -57,6 +57,9 @@ export default class UI {
     $("#mapLoadButton").on("click", () => this.onMapLoadClick());
     $("#scanMapLink").on("click", () => this.onScanMapClick());
     $("#csvFileInput").on("change", (event) => this.onCSVFileSelected(event));
+    // WebSocket buttons
+    $("#wsConnectButton").on("click", () => this.onWsConnectClick());
+    $("#wsDisconnectButton").on("click", () => this.onWsDisconnectClick());
   }
   setupMapExplorer() {
     $("#switchControllerType").on("click", () => {
@@ -127,6 +130,30 @@ export default class UI {
       console.log("CSV file loaded, lines:", this.csvContent.split('\n').length);
     };
     reader.readAsText(file);
+  }
+
+  onWsConnectClick() {
+    const eventCode = $("#eventCodeInput").val().trim();
+    console.log("Connecting to WebSocket with room:", eventCode || "(global)");
+    
+    this.appRenderer.connectWebSocket(eventCode);
+    
+    // Update button states
+    $("#wsConnectButton").prop("disabled", true);
+    $("#wsDisconnectButton").prop("disabled", false);
+  }
+
+  onWsDisconnectClick() {
+    console.log("Disconnecting from WebSocket");
+    
+    this.appRenderer.disconnectWebSocket();
+    
+    // Update button states
+    $("#wsConnectButton").prop("disabled", false);
+    $("#wsDisconnectButton").prop("disabled", true);
+    
+    // Clear all player markers
+    this.appRenderer._clearAllPlayerMarkers();
   }
 
   onMapLoadClick() {
