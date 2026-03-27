@@ -57,7 +57,7 @@ a:hover {
 .uiPanel {
   overflow: auto;
   margin: auto auto;
-  max-width: min(70vw, 700px);
+  max-width: min(75vw, 850px);
   padding-left: 20px;
   padding-right: 20px;
   background: linear-gradient(45deg, rgba(255, 255, 255, 0.95) 0%, rgba(230, 230, 230, 0.5) 100%);

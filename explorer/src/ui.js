@@ -62,7 +62,7 @@ export default class UI {
       border-radius: 4px;
       font-family: Arial, sans-serif;
       font-size: 12px;
-      display: flex;
+      display: none;  /* Hidden initially - shown when map is loaded */
       flex-direction: column;
       gap: 8px;
     `;
@@ -424,6 +424,8 @@ export default class UI {
       $("#controls").fadeIn();
       $("#loadingName").text("Loading...");
       $("#loadingValue").text("");
+      // Show the checkpoint mode toggle when map is loaded
+      $("#marker-toggle-container").show();
     });
     // Sync the input ranges with their value in the appRenderer
     $("#fogRange").val(this.appRenderer.fog);
@@ -435,6 +437,8 @@ export default class UI {
     $("#controls").slideUp(() => {
       $("canvas").hide(0);
       $("#choose-map").fadeIn();
+      // Hide the checkpoint mode toggle when going back to map selection
+      $("#marker-toggle-container").hide();
       this.appRenderer.cleanupMap();
       this.updateUrl(true);
       this.shouldUpdateUrl = false;

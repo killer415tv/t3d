@@ -294,6 +294,20 @@ export default class AppRenderer {
       }
     });
     this.transformControls.addEventListener('change', () => {
+      // Update label position when marker is moved via TransformControls
+      if (this.selectedMarker && this.selectedMarker.mesh && this.selectedMarker.mesh.userData.labelSprite) {
+        const labelSprite = this.selectedMarker.mesh.userData.labelSprite;
+        const radius = this.selectedMarker.radius;
+        labelSprite.position.set(
+          this.selectedMarker.mesh.position.x,
+          this.selectedMarker.mesh.position.y + radius + 50,
+          this.selectedMarker.mesh.position.z
+        );
+        // Update stored position
+        this.selectedMarker.x = this.selectedMarker.mesh.position.x;
+        this.selectedMarker.y = this.selectedMarker.mesh.position.y;
+        this.selectedMarker.z = this.selectedMarker.mesh.position.z;
+      }
       // Notify UI when marker position changes
       if (this.onMarkerListUpdate) {
         this.onMarkerListUpdate(this.getMarkersCSV());
@@ -517,9 +531,10 @@ export default class AppRenderer {
     this.selectedMarker.z = this.selectedMarker.mesh.position.z;
     
     // Update label position if it exists
-    if (this.selectedMarker.labelSprite) {
+    if (this.selectedMarker && this.selectedMarker.mesh && this.selectedMarker.mesh.userData.labelSprite) {
+      const labelSprite = this.selectedMarker.mesh.userData.labelSprite;
       const radius = this.selectedMarker.radius;
-      this.selectedMarker.labelSprite.position.set(
+      labelSprite.position.set(
         this.selectedMarker.x,
         this.selectedMarker.y + radius + 50,
         this.selectedMarker.z
