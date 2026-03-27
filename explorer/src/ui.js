@@ -42,7 +42,240 @@ export default class UI {
 
     $("canvas").on("wheel", (event) => this.onMouseWheel(event));
 
+    // Setup custom markers system
+    this._setupCustomMarkersUI();
+
     this.checkAutoLoad();
+  }
+
+  _setupCustomMarkersUI() {
+    // Create toggle container (top right)
+    const toggleContainer = document.createElement("div");
+    toggleContainer.id = "marker-toggle-container";
+    toggleContainer.style.cssText = `
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(0,0,0,0.8);
+      padding: 10px;
+      border-radius: 4px;
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    `;
+
+    // Row with checkbox and buttons
+    const controlsRow = document.createElement("div");
+    controlsRow.style.cssText = "display: flex; align-items: center; gap: 10px;";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.id = "marker-mode-toggle";
+
+    const label = document.createElement("label");
+    label.htmlFor = "marker-mode-toggle";
+    label.textContent = "Checkpoint mode";
+    label.style.cssText = "cursor: pointer; color: white;";
+
+    controlsRow.appendChild(checkbox);
+    controlsRow.appendChild(label);
+
+    // Info button
+    const infoBtn = document.createElement("button");
+    infoBtn.textContent = "Info";
+    infoBtn.style.cssText = `
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      background: #444;
+      color: white;
+      border: 1px solid #666;
+      border-radius: 3px;
+    `;
+    infoBtn.onclick = () => {
+      alert("CHECKPOINT PLACEMENT CONTROLS:\n\n" +
+        "1. Activate mode with checkbox\n" +
+        "2. Move mouse over terrain - green preview shows placement\n" +
+        "3. Press C to create checkpoint at preview position\n" +
+        "4. Click on a checkpoint to select it\n" +
+        "5. Move selected checkpoint:\n" +
+        "   - A/D: X axis\n" +
+        "   - W/S: Z axis\n" +
+        "   - Up/Down arrows: Y axis\n" +
+        "6. Resize selected checkpoint:\n" +
+        "   - Left/Right arrows: decrease/increase radius\n" +
+        "7. Press X to delete selected checkpoint\n\n" +
+        "CSV output: ID, X/39.37, Y/39.37, Z/39.37, R/39.37");
+    };
+
+    // Download CSV button
+    const downloadBtn = document.createElement("button");
+    downloadBtn.textContent = "Download CSV";
+    downloadBtn.id = "download-csv-btn";
+    downloadBtn.style.cssText = `
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      background: #444;
+      color: white;
+      border: 1px solid #666;
+      border-radius: 3px;
+    `;
+    downloadBtn.onclick = () => {
+      const csv = this.appRenderer.getMarkersCSV();
+      if (!csv || csv === "ID,X,Y,Z,R\n") {
+        alert("No checkpoints to download!");
+        return;
+      }
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "checkpoints.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    controlsRow.appendChild(infoBtn);
+    controlsRow.appendChild(downloadBtn);
+
+    toggleContainer.appendChild(controlsRow);
+
+    // Markers panel (below controls)
+    const markersPanel = document.createElement("div");
+    markersPanel.id = "markers-panel";
+    markersPanel.style.cssText = `
+      background: rgba(0,0,0,0.9);
+      padding: 10px;
+      border-radius: 4px;
+      color: white;
+      font-family: monospace;
+      font-size: 11px;
+      overflow: auto;
+      display: none;
+      max-height: 200px;
+    `;
+    
+    const title = document.createElement("div");
+    title.textContent = "=== CHECKPOINTS ===";
+    title.style.cssText = "font-weight: bold; margin-bottom: 5px; color: #00ff00;";
+    markersPanel.appendChild(title);
+    
+    const csvContent = document.createElement("pre");
+    csvContent.id = "markers-csv";
+    csvContent.style.cssText = "margin: 0; white-space: pre-wrap;";
+    markersPanel.appendChild(csvContent);
+
+    toggleContainer.appendChild(markersPanel);
+    document.body.appendChild(toggleContainer);
+
+    // Handle toggle change
+    $("#marker-mode-toggle").on("change", (event) => {
+      const enabled = $(event.target).is(":checked");
+      this.appRenderer.setCustomMarkerMode(enabled);
+      
+      // Show/hide markers panel based on mode or if there are markers
+      if (enabled || this.appRenderer.customMarkers.length > 0) {
+        $("#markers-panel").show();
+      } else {
+        $("#markers-panel").hide();
+      }
+    });
+
+    // Set up marker list update callback
+    this.appRenderer.onMarkerListUpdate = (csv) => {
+      $("#markers-csv").text(csv);
+      
+      // Show panel if there are markers
+      if (this.appRenderer.customMarkers.length > 0) {
+        $("#markers-panel").show();
+      }
+    };
+
+    // Mouse move handler for preview
+    $("canvas").on("mousemove", (event) => {
+      if (this.appRenderer.customMarkerMode) {
+        this.appRenderer.updatePreviewPosition(event.clientX, event.clientY);
+      }
+    });
+
+    // Click handler for selecting markers
+    $("canvas").on("click", (event) => {
+      // Allow selecting markers when there are markers and not in placement mode
+      // Or allow selection even in placement mode but not when clicking on preview
+      if (!this.appRenderer.customMarkerMode && this.appRenderer.customMarkers.length > 0) {
+        // Allow selecting markers when not in placement mode
+        this.appRenderer.selectMarker(event.clientX, event.clientY);
+      } else if (this.appRenderer.customMarkerMode && this.appRenderer.customMarkers.length > 0) {
+        // Try to select a marker even in placement mode
+        this.appRenderer.selectMarker(event.clientX, event.clientY);
+      }
+    });
+
+    // Keyboard handler for all marker operations
+    $(document).on("keydown", (event) => {
+      const key = event.key.toLowerCase();
+      
+      // C - Create marker (only in marker mode)
+      if (key === "c" && this.appRenderer.customMarkerMode) {
+        const marker = this.appRenderer.createMarker();
+        if (marker) {
+          $("#markers-csv").text(this.appRenderer.getMarkersCSV());
+          $("#markers-panel").show();
+        }
+        return false;
+      }
+      
+      // X - Delete selected marker
+      if (key === "x" && this.appRenderer.selectedMarker) {
+        this.appRenderer.deleteSelectedMarker();
+        $("#markers-csv").text(this.appRenderer.getMarkersCSV());
+        return false;
+      }
+      
+      // AD - Move along X axis
+      if (key === "a" && this.appRenderer.selectedMarker) {
+        this.appRenderer.moveSelectedMarker("x", -1);
+        return false;
+      }
+      if (key === "d" && this.appRenderer.selectedMarker) {
+        this.appRenderer.moveSelectedMarker("x", 1);
+        return false;
+      }
+      
+      // WS - Move along Z axis
+      if (key === "w" && this.appRenderer.selectedMarker) {
+        this.appRenderer.moveSelectedMarker("z", -1);
+        return false;
+      }
+      if (key === "s" && this.appRenderer.selectedMarker) {
+        this.appRenderer.moveSelectedMarker("z", 1);
+        return false;
+      }
+      
+      // Arrow keys - Move along Y axis
+      if (event.key === "ArrowUp" && this.appRenderer.selectedMarker) {
+        this.appRenderer.moveSelectedMarker("y", 1);
+        return false;
+      }
+      if (event.key === "ArrowDown" && this.appRenderer.selectedMarker) {
+        this.appRenderer.moveSelectedMarker("y", -1);
+        return false;
+      }
+      
+      // ArrowLeft/ArrowRight - Change marker radius
+      if (event.key === "ArrowLeft" && this.appRenderer.selectedMarker) {
+        this.appRenderer.moveSelectedMarker("r", -1);
+        return false;
+      }
+      if (event.key === "ArrowRight" && this.appRenderer.selectedMarker) {
+        this.appRenderer.moveSelectedMarker("r", 1);
+        return false;
+      }
+    });
   }
 
   /*

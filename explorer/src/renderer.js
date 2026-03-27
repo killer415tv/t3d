@@ -1,5 +1,6 @@
 import { FlyControls } from "three/examples/jsm/controls/FlyControls.js";
 import { MapControls } from "three/examples/jsm/controls/MapControls.js";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 
 const CANVAS_CLEAR_COLOR = 0x342920;
 const FOG_LENGTH = 5000;
@@ -30,6 +31,20 @@ export default class AppRenderer {
     this.lightIntensity = 1.25;
     this.loadedMapID = undefined;
     this.controllerType = "fly";
+
+    // Custom markers system
+    this.customMarkers = [];
+    this.customMarkerNextId = 0;
+    this.customMarkerMode = false;
+    this.previewSphere = null;
+    this.selectedMarker = null;
+    this.transformControls = null;
+    this.raycaster = new THREE.Raycaster();
+    this.mouse = new THREE.Vector2();
+    this.markerMoveSpeed = 10;
+
+    // Callback for marker list updates
+    this.onMarkerListUpdate = null;
 
     this.webGLRendererOptions = {
       sortObjects: false,
@@ -184,6 +199,8 @@ export default class AppRenderer {
     this._renderOptions = undefined;
     this.loadedMapID = undefined;
     this._clearAllPlayerMarkers();
+    // Clear custom markers
+    this._clearCustomMarkers();
     for (const mesh of this._mapMeshes) {
       this._threeContext.scene.remove(mesh);
     }
@@ -191,6 +208,27 @@ export default class AppRenderer {
       this._threeContext.skyScene.remove(skyBox);
     }
     this._mapMeshes = [];
+  }
+
+  _clearCustomMarkers() {
+    // Clear custom markers from scene
+    for (const marker of this.customMarkers) {
+      this._threeContext.scene.remove(marker.mesh);
+      // Also remove the label sprite if it exists
+      if (marker.labelSprite) {
+        this._threeContext.scene.remove(marker.labelSprite);
+      }
+      marker.mesh.geometry.dispose();
+      marker.mesh.material.dispose();
+    }
+    this.customMarkers = [];
+    this.customMarkerNextId = 0;
+    this.selectedMarker = null;
+    if (this.transformControls) {
+      this.transformControls.visible = false;
+      this.transformControls.enabled = false;
+      this.transformControls.detach();
+    }
   }
 
   setupScene() {
@@ -223,8 +261,329 @@ export default class AppRenderer {
 
     this.setupWebGLRenderer(true);
     this.setupController();
+    // Initialize custom markers system
+    this._initCustomMarkersSystem();
     // WebSocket connection will be set up via UI buttons, not automatic
     this._render();
+  }
+
+  _initCustomMarkersSystem() {
+    const { _threeContext: context } = this;
+    
+    // Create preview sphere (semi-transparent ghost)
+    const previewGeometry = new THREE.SphereGeometry(591, 16, 16);
+    const previewMaterial = new THREE.MeshBasicMaterial({
+      color: 0x00ff00,
+      transparent: true,
+      opacity: 0.4,
+      wireframe: true
+    });
+    this.previewSphere = new THREE.Mesh(previewGeometry, previewMaterial);
+    this.previewSphere.visible = false;
+    this.previewSphere.userData.isPreview = true;
+    context.scene.add(this.previewSphere);
+    
+    // Create TransformControls for moving markers
+    this.transformControls = new TransformControls(context.camera, context.renderer.domElement);
+    this.transformControls.visible = false;
+    this.transformControls.enabled = false;
+    this.transformControls.addEventListener('dragging-changed', (event) => {
+      // Disable camera controls while dragging
+      if (context.controls) {
+        context.controls.enabled = !event.value;
+      }
+    });
+    this.transformControls.addEventListener('change', () => {
+      // Notify UI when marker position changes
+      if (this.onMarkerListUpdate) {
+        this.onMarkerListUpdate(this.getMarkersCSV());
+      }
+    });
+    context.scene.add(this.transformControls);
+  }
+
+  // Toggle custom marker placement mode
+  setCustomMarkerMode(enabled) {
+    this.customMarkerMode = enabled;
+    if (this.previewSphere) {
+      this.previewSphere.visible = enabled;
+    }
+    // If disabling, hide transform controls
+    if (!enabled && this.transformControls) {
+      this.transformControls.visible = false;
+      this.transformControls.enabled = false;
+    }
+  }
+
+  // Update preview sphere position based on mouse raycast
+  updatePreviewPosition(mouseX, mouseY) {
+    if (!this.customMarkerMode || !this.previewSphere) return;
+    
+    const { _threeContext: context } = this;
+    if (!context.camera || !context.scene) return;
+    
+    // Convert mouse to normalized device coordinates
+    this.mouse.x = (mouseX / window.innerWidth) * 2 - 1;
+    this.mouse.y = -(mouseY / window.innerHeight) * 2 + 1;
+    
+    // Cast ray from camera
+    this.raycaster.setFromCamera(this.mouse, context.camera);
+    
+    // Get all meshes in scene except preview and player markers
+    const sceneMeshes = [];
+    context.scene.traverse((obj) => {
+      if (obj.isMesh && !obj.userData.isPreview && !obj.userData.isPlayerMarker) {
+        sceneMeshes.push(obj);
+      }
+    });
+    
+    const intersects = this.raycaster.intersectObjects(sceneMeshes, false);
+    
+    if (intersects.length > 0) {
+      const hit = intersects[0];
+      this.previewSphere.position.copy(hit.point);
+      this.previewSphere.visible = true;
+    } else {
+      this.previewSphere.visible = false;
+    }
+  }
+
+  // Create a marker at the preview position
+  createMarker() {
+    if (!this.previewSphere || !this.previewSphere.visible) return null;
+    
+    const { _threeContext: context } = this;
+    const position = this.previewSphere.position.clone();
+    
+    // Create marker sphere
+    const markerGeometry = new THREE.SphereGeometry(591, 16, 16);
+    const markerMaterial = new THREE.MeshBasicMaterial({
+      color: 0x0088ff,
+      transparent: true,
+      opacity: 0.5
+    });
+    const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+    marker.position.copy(position);
+    marker.userData.isCustomMarker = true;
+    marker.userData.markerId = this.customMarkerNextId;
+    
+    // Add axis helper
+    const axisHelper = new THREE.AxesHelper(50);
+    marker.add(axisHelper);
+    
+    // Add label
+    const labelSprite = this._createTextSprite(this.customMarkerNextId.toString(), 'ffffff');
+    // Position label above the sphere (radius + offset)
+    labelSprite.position.set(position.x, position.y + 591 + 50, position.z);
+    labelSprite.userData.isLabel = true;
+    context.scene.add(labelSprite);
+    
+    // Store label in userData so we can update it
+    marker.userData.labelSprite = labelSprite;
+    
+    context.scene.add(marker);
+    
+    const markerData = {
+      id: this.customMarkerNextId,
+      mesh: marker,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      radius: 591
+    };
+    
+    this.customMarkers.push(markerData);
+    this.customMarkerNextId++;
+    
+    return markerData;
+  }
+
+  // Select a marker by clicking
+  selectMarker(mouseX, mouseY) {
+    const { _threeContext: context } = this;
+    if (!context.camera) return null;
+    
+    this.mouse.x = (mouseX / window.innerWidth) * 2 - 1;
+    this.mouse.y = -(mouseY / window.innerHeight) * 2 + 1;
+    
+    this.raycaster.setFromCamera(this.mouse, context.camera);
+    
+    // Get all marker meshes
+    const markerMeshes = this.customMarkers.map(m => m.mesh);
+    const intersects = this.raycaster.intersectObjects(markerMeshes, false);
+    
+    if (intersects.length > 0) {
+      const selectedMesh = intersects[0].object;
+      const markerData = this.customMarkers.find(m => m.mesh === selectedMesh);
+      
+      if (markerData) {
+        this.selectedMarker = markerData;
+        
+        // Show transform controls
+        if (this.transformControls) {
+          this.transformControls.attach(selectedMesh);
+          this.transformControls.visible = true;
+          this.transformControls.enabled = true;
+        }
+        
+        // Highlight selected marker - green when selected
+        selectedMesh.material.color.setHex(0x00ff00);
+        
+        return markerData;
+      }
+    }
+    
+    // If clicked elsewhere, deselect
+    this.deselectMarker();
+    return null;
+  }
+
+  // Deselect current marker
+  deselectMarker() {
+    if (this.selectedMarker) {
+      // Restore original color - blue
+      this.selectedMarker.mesh.material.color.setHex(0x0088ff);
+    }
+    
+    this.selectedMarker = null;
+    
+    if (this.transformControls) {
+      this.transformControls.visible = false;
+      this.transformControls.enabled = false;
+      this.transformControls.detach();
+    }
+  }
+
+  // Delete selected marker
+  deleteSelectedMarker() {
+    if (!this.selectedMarker) return false;
+    
+    const { _threeContext: context } = this;
+    const marker = this.selectedMarker;
+    
+    // Remove from scene
+    context.scene.remove(marker.mesh);
+    
+    // Clean up resources
+    marker.mesh.geometry.dispose();
+    marker.mesh.material.dispose();
+    marker.mesh.traverse((child) => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) {
+        if (child.material.map) child.material.map.dispose();
+        child.material.dispose();
+      }
+    });
+    
+    // Remove from array
+    const index = this.customMarkers.indexOf(marker);
+    if (index > -1) {
+      this.customMarkers.splice(index, 1);
+    }
+    
+    // Deselect
+    this.deselectMarker();
+    
+    return true;
+  }
+
+  // Move selected marker with keyboard
+  moveSelectedMarker(axis, direction) {
+    if (!this.selectedMarker) return;
+    
+    // Handle radius change
+    if (axis === 'r') {
+      this._changeMarkerRadius(direction);
+      return;
+    }
+    
+    const delta = direction * this.markerMoveSpeed;
+    
+    switch (axis) {
+      case 'x':
+        this.selectedMarker.mesh.position.x += delta;
+        break;
+      case 'y':
+        this.selectedMarker.mesh.position.y += delta;
+        break;
+      case 'z':
+        this.selectedMarker.mesh.position.z += delta;
+        break;
+    }
+    
+    // Update stored position
+    this.selectedMarker.x = this.selectedMarker.mesh.position.x;
+    this.selectedMarker.y = this.selectedMarker.mesh.position.y;
+    this.selectedMarker.z = this.selectedMarker.mesh.position.z;
+    
+    // Update label position if it exists
+    if (this.selectedMarker.labelSprite) {
+      const radius = this.selectedMarker.radius;
+      this.selectedMarker.labelSprite.position.set(
+        this.selectedMarker.x,
+        this.selectedMarker.y + radius + 50,
+        this.selectedMarker.z
+      );
+    }
+    
+    // Force mesh matrix update
+    this.selectedMarker.mesh.updateMatrixWorld(true);
+    
+    // Notify UI
+    if (this.onMarkerListUpdate) {
+      this.onMarkerListUpdate(this.getMarkersCSV());
+    }
+  }
+
+  // Change radius of selected marker
+  _changeMarkerRadius(direction) {
+    if (!this.selectedMarker) return;
+    
+    const mesh = this.selectedMarker.mesh;
+    const radiusDelta = direction * 1; // Change by 1 unit
+    
+    // Get current radius from geometry
+    const currentRadius = mesh.geometry.parameters.radius;
+    const newRadius = Math.max(1, currentRadius + radiusDelta); // Minimum radius of 1
+    
+    // Dispose old geometry and create new one
+    mesh.geometry.dispose();
+    mesh.geometry = new THREE.SphereGeometry(newRadius, 16, 16);
+    
+    // Update stored radius
+    this.selectedMarker.radius = newRadius;
+    
+    // Update label position to stay at sphere edge
+    mesh.traverse((child) => {
+      if (child.userData && child.userData.isLabel) {
+        child.position.y = newRadius + 10; // Add larger offset to keep label above sphere edge
+      }
+    });
+    
+    // Force mesh matrix update
+    mesh.updateMatrixWorld(true);
+    
+    // Notify UI
+    if (this.onMarkerListUpdate) {
+      this.onMarkerListUpdate(this.getMarkersCSV());
+    }
+  }
+
+  // Get CSV of all markers (for UI display)
+  getMarkersCSV() {
+    const COORD_SCALE = 39.37;
+    let csv = "STEP,STEPNAME,X,Y,Z,RADIUS\n";
+    
+    for (const marker of this.customMarkers) {
+      const x = (marker.x / COORD_SCALE).toFixed(3);
+      const y = (marker.y / COORD_SCALE).toFixed(3);
+      const z = (-marker.z / COORD_SCALE).toFixed(3); // Invert Z for output
+      const r = (marker.radius / COORD_SCALE).toFixed(3);
+      const stepName = marker.id === 0 ? "start" : "*";
+      csv += `${marker.id},${stepName},${x},${y},${z},${r}\n`;
+    }
+    
+    return csv;
   }
 
   onWindowResize() {
@@ -614,12 +973,15 @@ export default class AppRenderer {
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d");
 
-    const fontSize = 24;
+    const fontSize = 72;
     context.font = "bold " + fontSize + "px Arial, sans-serif";
+    
+    // Measure text AFTER setting font
     const textWidth = context.measureText(text).width;
-    canvas.width = textWidth + 20;
-    canvas.height = fontSize + 20;
+    canvas.width = Math.max(textWidth + 40, 100);
+    canvas.height = fontSize + 40;
 
+    // Set font again after canvas resize
     context.font = "bold " + fontSize + "px Arial, sans-serif";
     context.fillStyle = "#" + colorHex;
     context.textAlign = "center";
@@ -627,7 +989,7 @@ export default class AppRenderer {
     context.fillText(text, canvas.width / 2, canvas.height / 2);
 
     context.strokeStyle = "#000000";
-    context.lineWidth = 3;
+    context.lineWidth = 4;
     context.strokeText(text, canvas.width / 2, canvas.height / 2);
     context.fillText(text, canvas.width / 2, canvas.height / 2);
 
@@ -635,8 +997,8 @@ export default class AppRenderer {
     const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
     const sprite = new THREE.Sprite(spriteMaterial);
 
-    const scaleFactor = 50;
-    sprite.scale.set(canvas.width / canvas.height * scaleFactor, scaleFactor, 1);
+    // Make sprite bigger in world space
+    sprite.scale.set(canvas.width / canvas.height * 200, 200, 1);
 
     return sprite;
   }
