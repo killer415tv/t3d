@@ -3,7 +3,6 @@ import DataRenderer from "./DataRenderer";
 
 import type LocalReader from "../LocalReader/LocalReader";
 import type Logger from "../Logger";
-import type { Mesh, Sprite, SphereGeometry, MeshBasicMaterial, SpriteMaterial, CanvasTexture, AxesHelper } from "three";
 
 /**
  * Custom renderer for displaying markers from CSV data
@@ -37,14 +36,25 @@ export default class CustomMarkersRenderer extends DataRenderer {
             // Parse CSV line (handling commas within values)
             const parts = this.parseCSVLine(line);
 
+            // Expected format: STEP,STEPNAME,X,Y,Z,RADIUS
+            // Handle both old format (5 columns) and new format (6 columns)
             if (parts.length >= 5) {
-                markers.push({
+                const marker: any = {
                     step: parseInt(parts[0], 10),
                     stepName: parts[1],
                     x: parseFloat(parts[2]),
                     y: parseFloat(parts[3]),
-                    z: parseFloat(parts[4])
-                });
+                    z: parseFloat(parts[4]),
+                    radius: undefined
+                };
+                // If there's a 6th column and it's a valid number, it's the radius
+                if (parts.length >= 6 && parts[5] !== undefined && parts[5] !== '') {
+                    const parsedRadius = parseFloat(parts[5]);
+                    if (!isNaN(parsedRadius)) {
+                        marker.radius = parsedRadius;
+                    }
+                }
+                markers.push(marker);
             }
         }
 
@@ -85,8 +95,6 @@ export default class CustomMarkersRenderer extends DataRenderer {
 
         // Get CSV content from settings
         const csvContent = this.settings.csvContent;
-        const sphereRadius = this.settings.sphereRadius || 15;
-        const labelOffset = this.settings.labelOffset || 30;
 
         if (!csvContent) {
             self.getOutput().meshes = [];
@@ -94,32 +102,7 @@ export default class CustomMarkersRenderer extends DataRenderer {
             return callback();
         }
 
-        // Get map bounds from TerrainRenderer to calculate correct offset
-        let mapBounds = null;
-        let propPositions: number[] = [];
-        
-        try {
-            mapBounds = T3D.getContextValue(this.context, T3D.TerrainRenderer, "bounds", null);
-            console.log("[CustomMarkersRenderer] Map bounds:", mapBounds);
-            
-            // Get some prop positions to compare
-            const propMeshes = T3D.getContextValue(this.context, T3D.PropertiesRenderer, "meshes", null);
-            if (propMeshes && propMeshes.length > 0) {
-                // Get first 3 prop positions for reference
-                let count = 0;
-                for (const mesh of propMeshes) {
-                    if (count >= 3) break;
-                    propPositions.push(mesh.position.x, mesh.position.y, mesh.position.z);
-                    console.log("[CustomMarkersRenderer] Sample prop position (T3D coords):", mesh.position.x, mesh.position.y, mesh.position.z);
-                    count++;
-                }
-            }
-        } catch (e) {
-            console.log("[CustomMarkersRenderer] No map bounds available");
-        }
-
         console.log("[CustomMarkersRenderer] Using direct coordinates from CSV");
-
         console.log("[CustomMarkersRenderer] CSV loaded, parsing...");
 
         // Parse CSV
@@ -128,7 +111,12 @@ export default class CustomMarkersRenderer extends DataRenderer {
         // Create meshes for each marker
         for (const marker of markers) {
         // Get CSV scale from settings (default 39.4)
-        const COORD_SCALE = this.settings.csvScale || 39.4;
+        const COORD_SCALE = this.settings.csvScale || 39.37;
+        
+        // Radius comes from CSV already in game units, convert to 3D units
+        // Default radius: 15 units in CSV = 15 * 39.37 = 591 in 3D units
+        const defaultRadius = 15 * COORD_SCALE;
+        const markerRadius = marker.radius ? marker.radius * COORD_SCALE : defaultRadius;
         
         // Apply coordinate transformation from CSV to Three.js
         // Height is NOT inverted (Y stays positive)
@@ -138,33 +126,33 @@ export default class CustomMarkersRenderer extends DataRenderer {
             -marker.z * COORD_SCALE
         );
         
-            console.log("[CustomMarkersRenderer] Marker", marker.step, "CSV:", marker.x, marker.y, marker.z, "→ T3D:", pos.x.toFixed(1), pos.y.toFixed(1), pos.z.toFixed(1));
+            console.log("[CustomMarkersRenderer] Marker", marker.step, "CSV:", marker.x, marker.y, marker.z, "R:", marker.radius, "→ T3D:", pos.x.toFixed(1), pos.y.toFixed(1), pos.z.toFixed(1), "radius:", markerRadius.toFixed(1));
 
             // Determine color based on step name
-            let color = 0x00ff00; // Green for regular points
+            let color = 0x0000ff; // Default blue for *
             if (marker.stepName === 'start') {
                 color = 0x00ff00; // Green
             } else if (marker.stepName === 'reset') {
-                color = 0xffaa00; // Orange
+                color = 0xffaa00; // Orange/Yellow for reset
             } else if (marker.stepName === 'end') {
                 color = 0xff0000; // Red
             } else if (marker.stepName === '*') {
-                color = 0xffff00; // Yellow
+                color = 0x0088ff; // Blue for *
             }
 
-            // Create sphere geometry
-            const geometry = new THREE.SphereGeometry(sphereRadius, 16, 16);
+            // Create sphere geometry with the radius from CSV
+            const geometry = new THREE.SphereGeometry(markerRadius, 32, 32);
             const material = new THREE.MeshBasicMaterial({
                 color: color,
                 transparent: true,
-                opacity: 0.8
+                opacity: 0.5
             });
             const sphere = new THREE.Mesh(geometry, material);
 
             // Position the sphere
             sphere.position.set(pos.x, pos.y, pos.z);
 
-            // Store marker data for label creation
+            // Store marker data
             sphere.userData = {
                 step: marker.step,
                 stepName: marker.stepName,
@@ -173,32 +161,15 @@ export default class CustomMarkersRenderer extends DataRenderer {
                 csvZ: marker.z,
                 x: pos.x,
                 y: pos.y,
-                z: pos.z
+                z: pos.z,
+                radius: markerRadius
             };
 
             meshes.push(sphere);
 
-            // Add axis as child of sphere for debugging
-            const axisHelper = new THREE.AxesHelper(200);
-            sphere.add(axisHelper);
-
-            // Create vertical line from ground to sky (debugging aid)
-            const lineGeometry = new THREE.BufferGeometry();
-            const linePoints = [
-                pos.x, pos.y - 5000, pos.z,  // Start below ground
-                pos.x, pos.y + 5000, pos.z   // Go 5000 units up
-            ];
-            lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePoints, 3));
-            const lineMaterial = new THREE.LineBasicMaterial({ color: color });
-            const line = new THREE.Line(lineGeometry, lineMaterial);
-            meshes.push(line);
-
-            // Create label (using sprite for text)
-            const labelSprite = this.createTextSprite(
-                marker.step.toString(),
-                labelOffset
-            );
-            labelSprite.position.set(pos.x, pos.y + labelOffset, pos.z);
+            // Create label (using sprite for text) - positioned at sphere edge + offset
+            const labelSprite = this.createTextSprite(marker.step.toString());
+            labelSprite.position.set(pos.x, pos.y + markerRadius + 50, pos.z);
             labels.push(labelSprite);
         }
 
@@ -213,28 +184,30 @@ export default class CustomMarkersRenderer extends DataRenderer {
      * @param {number} offset - Offset above sphere
      * @returns {THREE.Sprite} Sprite object
      */
-    private createTextSprite(text: string, offset: number): any {
+    private createTextSprite(text: string): any {
         // Create canvas for text
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d')!;
 
-        canvas.width = 128;
-        canvas.height = 64;
+        const fontSize = 72;
+        context.font = "bold " + fontSize + "px Arial, sans-serif";
+        
+        // Measure text AFTER setting font
+        const textWidth = context.measureText(text).width;
+        canvas.width = Math.max(textWidth + 40, 100);
+        canvas.height = fontSize + 40;
 
-        // Draw background
-        context.fillStyle = 'rgba(0, 0, 0, 0.6)';
-        context.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Draw border
-        context.strokeStyle = '#ffffff';
-        context.lineWidth = 2;
-        context.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
-
-        // Draw text
-        context.font = 'bold 36px Arial';
+        // Set font again after canvas resize
+        context.font = "bold " + fontSize + "px Arial, sans-serif";
         context.fillStyle = '#ffffff';
         context.textAlign = 'center';
         context.textBaseline = 'middle';
+        context.fillText(text, canvas.width / 2, canvas.height / 2);
+
+        // Draw border/background
+        context.strokeStyle = '#000000';
+        context.lineWidth = 4;
+        context.strokeText(text, canvas.width / 2, canvas.height / 2);
         context.fillText(text, canvas.width / 2, canvas.height / 2);
 
         // Create texture from canvas
@@ -246,9 +219,9 @@ export default class CustomMarkersRenderer extends DataRenderer {
             transparent: true
         });
 
-        // Create sprite
+        // Create sprite - make it bigger
         const sprite = new THREE.Sprite(material);
-        sprite.scale.set(40, 20, 1);
+        sprite.scale.set(canvas.width / canvas.height * 200, 200, 1);
 
         return sprite;
     }

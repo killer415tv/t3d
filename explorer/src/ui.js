@@ -405,8 +405,6 @@ export default class UI {
       props: $("#loadProps").is(":checked"),
       collisions: $("#loadColl").is(":checked"),
       csvContent: this.csvContent,
-      markerRadius: parseInt($("#markerRadius").val(), 10) || 15,
-      labelOffset: 30,
     };
     $("#choose-map").slideUp(() => {
       this.showingProgress = true;
