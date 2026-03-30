@@ -270,8 +270,11 @@ export default class AppRenderer {
   _initCustomMarkersSystem() {
     const { _threeContext: context } = this;
     
+    // Initialize default radius (15m in internal units)
+    this.defaultMarkerRadius = 15 * 39.37;
+    
     // Create preview sphere (semi-transparent ghost)
-    const previewGeometry = new THREE.SphereGeometry(591, 16, 16);
+    const previewGeometry = new THREE.SphereGeometry(this.defaultMarkerRadius, 16, 16);
     const previewMaterial = new THREE.MeshBasicMaterial({
       color: 0x00ff00,
       transparent: true,
@@ -314,6 +317,15 @@ export default class AppRenderer {
       }
     });
     context.scene.add(this.transformControls);
+  }
+
+  // Update preview sphere radius when default radius changes
+  updatePreviewSphereRadius() {
+    if (!this.previewSphere) return;
+    
+    const radius = this.defaultMarkerRadius || (15 * 39.37);
+    this.previewSphere.geometry.dispose();
+    this.previewSphere.geometry = new THREE.SphereGeometry(radius, 16, 16);
   }
 
   // Toggle custom marker placement mode
@@ -369,8 +381,11 @@ export default class AppRenderer {
     const { _threeContext: context } = this;
     const position = this.previewSphere.position.clone();
     
+    // Use default radius or fall back to 15m (591 internal units)
+    const radius = this.defaultMarkerRadius || (15 * 39.37);
+    
     // Create marker sphere
-    const markerGeometry = new THREE.SphereGeometry(591, 16, 16);
+    const markerGeometry = new THREE.SphereGeometry(radius, 16, 16);
     const markerMaterial = new THREE.MeshBasicMaterial({
       color: 0x0088ff,
       transparent: true,
@@ -382,13 +397,13 @@ export default class AppRenderer {
     marker.userData.markerId = this.customMarkerNextId;
     
     // Add axis helper
-    const axisHelper = new THREE.AxesHelper(50);
+    const axisHelper = new THREE.AxesHelper(radius * 0.5);
     marker.add(axisHelper);
     
     // Add label
     const labelSprite = this._createTextSprite(this.customMarkerNextId.toString(), 'ffffff');
     // Position label above the sphere (radius + offset)
-    labelSprite.position.set(position.x, position.y + 591 + 50, position.z);
+    labelSprite.position.set(position.x, position.y + radius + 50, position.z);
     labelSprite.userData.isLabel = true;
     context.scene.add(labelSprite);
     
@@ -403,7 +418,7 @@ export default class AppRenderer {
       x: position.x,
       y: position.y,
       z: position.z,
-      radius: 591
+      radius: radius
     };
     
     this.customMarkers.push(markerData);
@@ -431,6 +446,11 @@ export default class AppRenderer {
       const markerData = this.customMarkers.find(m => m.mesh === selectedMesh);
       
       if (markerData) {
+        // First deselect any previously selected marker (restore to blue)
+        if (this.selectedMarker && this.selectedMarker !== markerData) {
+          this.selectedMarker.mesh.material.color.setHex(0x0088ff);
+        }
+        
         this.selectedMarker = markerData;
         
         // Show transform controls
@@ -499,6 +519,85 @@ export default class AppRenderer {
     this.deselectMarker();
     
     return true;
+  }
+
+  // Set label for selected marker
+  setMarkerLabel(label) {
+    if (!this.selectedMarker) return;
+    
+    this.selectedMarker.label = label;
+    
+    // Update the label sprite if it exists
+    const { _threeContext: context } = this;
+    if (this.selectedMarker.mesh && this.selectedMarker.mesh.userData.labelSprite) {
+      const labelSprite = this.selectedMarker.mesh.userData.labelSprite;
+      
+      // Remove old label sprite
+      context.scene.remove(labelSprite);
+      
+      // Create new label sprite with updated text
+      const radius = this.selectedMarker.radius;
+      const newLabelSprite = this._createTextSprite(label, 'ffffff');
+      newLabelSprite.position.set(
+        this.selectedMarker.x,
+        this.selectedMarker.y + radius + 50,
+        this.selectedMarker.z
+      );
+      newLabelSprite.userData.isLabel = true;
+      context.scene.add(newLabelSprite);
+      
+      // Store new label sprite reference
+      this.selectedMarker.mesh.userData.labelSprite = newLabelSprite;
+    }
+  }
+
+  // Set note for selected marker
+  setMarkerNote(note) {
+    if (!this.selectedMarker) return;
+    
+    this.selectedMarker.note = note;
+  }
+
+  // Set radius for selected marker
+  setMarkerRadius(radius) {
+    if (!this.selectedMarker) return;
+    
+    const COORD_SCALE = 39.37;
+    const newRadiusInternal = radius * COORD_SCALE;
+    
+    this.selectedMarker.radius = newRadiusInternal;
+    
+    // Update the mesh size
+    const mesh = this.selectedMarker.mesh;
+    if (mesh) {
+      mesh.geometry.dispose();
+      mesh.geometry = new THREE.SphereGeometry(newRadiusInternal, 16, 16);
+      
+      // Update axis helper size
+      mesh.children.forEach(child => {
+        if (child instanceof THREE.AxesHelper) {
+          child.dispose();
+          mesh.remove(child);
+          const axisHelper = new THREE.AxesHelper(newRadiusInternal * 0.5);
+          mesh.add(axisHelper);
+        }
+      });
+      
+      // Update label position
+      if (mesh.userData.labelSprite) {
+        mesh.userData.labelSprite.position.set(
+          this.selectedMarker.x,
+          this.selectedMarker.y + newRadiusInternal + 50,
+          this.selectedMarker.z
+        );
+      }
+    }
+    
+    // Update transform controls if attached
+    if (this.transformControls && this.transformControls.object === mesh) {
+      this.transformControls.detach();
+      this.transformControls.attach(mesh);
+    }
   }
 
   // Move selected marker with keyboard
@@ -599,6 +698,46 @@ export default class AppRenderer {
     }
     
     return csv;
+  }
+
+  // Get XML of all markers (for checkpoint export)
+  getMarkersXML() {
+    const COORD_SCALE = 39.37;
+    const mapId = this.loadedMapID || 1;
+    const now = new Date();
+    const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
+    
+    let xml = `<?xml version="1.0" encoding="utf-8"?>
+<Checkpoints mapId="${mapId}">`;
+    
+    for (let i = 0; i < this.customMarkers.length; i++) {
+      const marker = this.customMarkers[i];
+      const x = (marker.x / COORD_SCALE).toFixed(5);
+      const y = (marker.y / COORD_SCALE).toFixed(5);
+      const z = (-marker.z / COORD_SCALE).toFixed(5); // Invert Z for output
+      const radius = (marker.radius / COORD_SCALE).toFixed(3);
+      const index = i + 1;
+      
+      // Generate default label based on index
+      let label = "CP " + index;
+      if (index === 1) label = "START";
+      else if (index === this.customMarkers.length) label = "END";
+      
+      // Get custom label if set
+      const customLabel = marker.label || "";
+      if (customLabel) label = customLabel;
+      
+      const note = marker.note || "";
+      const angle = marker.angle || 360;
+      
+      xml += `
+  <checkpoint index="${index}" label="${label}" mapId="${mapId}" x="${x}" y="${y}" z="${z}" timestamp="${timestamp}" radius="${radius}" angle="${angle}" note="${note}" />`;
+    }
+    
+    xml += `
+</Checkpoints>`;
+    
+    return xml;
   }
 
   onWindowResize() {

@@ -107,7 +107,11 @@ export default class UI {
         "   - Up/Down arrows: Y axis\n" +
         "6. Resize selected checkpoint:\n" +
         "   - Left/Right arrows: decrease/increase radius\n" +
-        "7. Press X to delete selected checkpoint\n\n" +
+        "7. Press X to delete selected checkpoint\n" +
+        "8. Press L to edit checkpoint label\n" +
+        "9. Press N to edit checkpoint note\n" +
+        "0. Press R to edit checkpoint radius\n\n" +
+        "Set default radius with input field above.\n\n" +
         "CSV output: ID, X/39.37, Y/39.37, Z/39.37, R/39.37");
     };
 
@@ -139,8 +143,64 @@ export default class UI {
       URL.revokeObjectURL(url);
     };
 
+    // Default radius input
+    const radiusLabel = document.createElement("span");
+    radiusLabel.textContent = " Default R:";
+    radiusLabel.style.cssText = "color: white; font-size: 11px; margin-left: 10px;";
+    
+    const radiusInput = document.createElement("input");
+    radiusInput.type = "number";
+    radiusInput.value = "15";
+    radiusInput.min = "1";
+    radiusInput.max = "500";
+    radiusInput.style.cssText = "width: 50px; padding: 2px; font-size: 11px;";
+    radiusInput.title = "Default radius for new checkpoints";
+    radiusInput.id = "default-radius-input";
+    
+    // Store default radius in appRenderer and update preview sphere
+    radiusInput.onchange = () => {
+      const radius = parseInt(radiusInput.value) || 15;
+      this.appRenderer.defaultMarkerRadius = radius * 39.37; // Convert to internal units
+      this.appRenderer.updatePreviewSphereRadius();
+    };
+    // Initialize default radius
+    this.appRenderer.defaultMarkerRadius = 15 * 39.37;
+
+    // Download XML button
+    const downloadXmlBtn = document.createElement("button");
+    downloadXmlBtn.textContent = "Download XML";
+    downloadXmlBtn.id = "download-xml-btn";
+    downloadXmlBtn.style.cssText = `
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      background: #444;
+      color: white;
+      border: 1px solid #666;
+      border-radius: 3px;
+      margin-left: 5px;
+    `;
+    downloadXmlBtn.onclick = () => {
+      const xml = this.appRenderer.getMarkersXML();
+      // Check if there are no checkpoints by checking if XML has any <checkpoint> elements
+      if (!xml || !xml.includes('<checkpoint ')) {
+        alert("No checkpoints to download!");
+        return;
+      }
+      const blob = new Blob([xml], { type: "application/xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "checkpoints.xml";
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
     controlsRow.appendChild(infoBtn);
     controlsRow.appendChild(downloadBtn);
+    controlsRow.appendChild(downloadXmlBtn);
+    controlsRow.appendChild(radiusLabel);
+    controlsRow.appendChild(radiusInput);
 
     toggleContainer.appendChild(controlsRow);
 
@@ -233,6 +293,43 @@ export default class UI {
       if (key === "x" && this.appRenderer.selectedMarker) {
         this.appRenderer.deleteSelectedMarker();
         $("#markers-csv").text(this.appRenderer.getMarkersCSV());
+        return false;
+      }
+      
+      // L - Edit label of selected marker
+      if (key === "l" && this.appRenderer.selectedMarker) {
+        const currentLabel = this.appRenderer.selectedMarker.label || "";
+        const newLabel = prompt("Enter checkpoint label:", currentLabel);
+        if (newLabel !== null) {
+          this.appRenderer.setMarkerLabel(newLabel);
+          $("#markers-csv").text(this.appRenderer.getMarkersCSV());
+        }
+        return false;
+      }
+      
+      // N - Edit note of selected marker
+      if (key === "n" && this.appRenderer.selectedMarker) {
+        const currentNote = this.appRenderer.selectedMarker.note || "";
+        const newNote = prompt("Enter checkpoint note:", currentNote);
+        if (newNote !== null) {
+          this.appRenderer.setMarkerNote(newNote);
+          $("#markers-csv").text(this.appRenderer.getMarkersCSV());
+        }
+        return false;
+      }
+      
+      // R - Edit radius of selected marker
+      if (key === "r" && this.appRenderer.selectedMarker) {
+        const COORD_SCALE = 39.37;
+        const currentRadius = this.appRenderer.selectedMarker.radius / COORD_SCALE;
+        const newRadius = prompt("Enter checkpoint radius:", currentRadius.toFixed(1));
+        if (newRadius !== null) {
+          const radius = parseFloat(newRadius);
+          if (!isNaN(radius) && radius > 0) {
+            this.appRenderer.setMarkerRadius(radius);
+            $("#markers-csv").text(this.appRenderer.getMarkersCSV());
+          }
+        }
         return false;
       }
       
